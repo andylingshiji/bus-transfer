@@ -1,0 +1,15 @@
+{
+  "name": "bus-journey",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 5173",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host 127.0.0.1 --port 4173"
+  },
+  "devDependencies": {
+    "puppeteer-core": "^24.15.0",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.6"
+  }
+}
