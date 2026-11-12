@@ -21,6 +21,19 @@ import {
   earliestConnection,
   sameLegPairs,
 } from "./transfer";
+import {
+  addFavorite,
+  clearFavoriteCookie,
+  FAV_COOKIE,
+  favoriteCookie,
+  favoriteDetail,
+  favoriteTitle,
+  findFavorite,
+  parseFavorites,
+  removeFavorite,
+  serializeFavorites,
+  type Favorite,
+} from "./favorites";
 
 interface Leg {
   choice: DirectionChoice;
@@ -53,6 +66,9 @@ const state: {
   legs: Leg[];
   etas: LegEta[];
   refreshing: boolean;
+  favorites: Favorite[];
+  favNote: string;
+  favError: boolean;
 } = {
   screen: "search",
   query: "",
@@ -67,6 +83,9 @@ const state: {
   legs: [],
   etas: [],
   refreshing: false,
+  favorites: [],
+  favNote: "",
+  favError: false,
 };
 
 let timer = 0;
@@ -75,6 +94,26 @@ let token = 0;
 
 function persist(): void {
   sessionStorage.setItem(STORAGE, JSON.stringify(state.legs));
+}
+
+function readCookie(name: string): string {
+  const chunks = document.cookie ? document.cookie.split(/; */) : [];
+  for (const chunk of chunks) {
+    const cut = chunk.indexOf("=");
+    if (cut < 0) continue;
+    if (chunk.slice(0, cut) === name) return chunk.slice(cut + 1);
+  }
+  return "";
+}
+
+function loadFavorites(): void {
+  state.favorites = parseFavorites(readCookie(FAV_COOKIE));
+}
+
+function writeFavorites(favs: Favorite[]): void {
+  const secure = location.protocol === "https:";
+  document.cookie = favs.length === 0 ? clearFavoriteCookie(secure) : favoriteCookie(serializeFavorites(favs), secure);
+  state.favorites = favs;
 }
 
 function restore(): void {
@@ -158,7 +197,9 @@ function searchView(): string {
     ? `<p class="note">九巴／龍運 ${state.counts.kmb} 條路線，城巴 ${state.counts.ctb} 條路線。</p>`
     : "";
   return `<main class="main">
+    ${state.query.trim() ? "" : favoriteList()}
     <p class="lead">輸入路線號碼，再選擇方向和上落車站。</p>
+    ${favStatus()}
     ${counts}
     <label class="field">路線號碼
       <input id="q" type="search" enterkeyhint="search" autocomplete="off" placeholder="例如 1、N121、A11" value="${esc(state.query)}" ${state.counts ? "" : "disabled"} />
@@ -248,8 +289,9 @@ function journeyView(): string {
     </article>`;
   }).join("");
   const empty = state.legs.length === 0 ? `<p class="status">還沒有車程。</p>` : "";
-  return `<main class="main">${empty}${cards}</main>
+  return `<main class="main">${favoriteList()}${favStatus()}${empty}${cards}</main>
     <div class="footer">
+      ${saveFavButton()}
       <button type="button" class="secondary" data-act="add">加一段車程</button>
       <button type="button" class="primary" data-act="finish" ${state.legs.length === 0 ? "disabled" : ""}>查看轉車時間</button>
     </div>`;
@@ -270,8 +312,10 @@ function resultView(): string {
     <p class="result-note">每 30 秒更新</p>
     ${parts.join("")}
     <p class="result-note">資料來自運輸署公開到站時間</p>
+    ${favStatus()}
   </main>
   <div class="footer">
+    ${saveFavButton()}
     <button type="button" class="secondary" data-act="refresh">重新整理</button>
     <button type="button" class="primary" data-act="back">返回修改</button>
   </div>`;
@@ -301,6 +345,36 @@ function legCard(leg: Leg, eta: LegEta | undefined, index: number): string {
     </div>
     ${pairHtml}
   </article>`;
+}
+
+function favoriteList(): string {
+  if (state.favorites.length === 0) return "";
+  const rows = state.favorites
+    .map(
+      (fav) => `<li class="fav-row">
+        <button type="button" class="choice" data-act="use-fav" data-id="${esc(fav.id)}">
+          <span class="num">${esc(favoriteTitle(fav))}</span>
+          <span class="hint">${esc(favoriteDetail(fav))}</span>
+        </button>
+        <button type="button" class="fav-drop" data-act="drop-fav" data-id="${esc(fav.id)}">刪除</button>
+      </li>`,
+    )
+    .join("");
+  return `<section class="favs">
+    <h2>常用</h2>
+    <ul class="list">${rows}</ul>
+  </section>`;
+}
+
+function saveFavButton(): string {
+  if (state.legs.length === 0) return "";
+  const saved = findFavorite(state.favorites, state.legs);
+  return `<button type="button" class="fav-save" data-act="save-fav">${saved ? "已在常用" : "加入常用"}</button>`;
+}
+
+function favStatus(): string {
+  if (!state.favNote) return "";
+  return `<p class="status${state.favError ? " error" : ""}">${esc(state.favNote)}</p>`;
 }
 
 function minuteParts(iso: string, now: number): { num: string; unit: string } {
@@ -398,7 +472,7 @@ app.addEventListener("click", (event) => {
   const target = (event.target as HTMLElement | null)?.closest<HTMLElement>("[data-act]");
   if (!target) return;
   const act = target.dataset.act ?? "";
-  if (state.busy && act !== "back") return;
+  if (state.busy && !["back", "save-fav", "drop-fav", "use-fav"].includes(act)) return;
   if (act === "back") return goBack();
   if (act === "retry") return void boot();
   if (act === "pick-route") return void pickRoute(target.dataset.feed === "ctb" ? "ctb" : "kmb", target.dataset.route ?? "");
@@ -410,6 +484,9 @@ app.addEventListener("click", (event) => {
   if (act === "up") return moveLeg(Number(target.dataset.index), -1);
   if (act === "down") return moveLeg(Number(target.dataset.index), 1);
   if (act === "refresh") return void loadResult();
+  if (act === "save-fav") return saveFav();
+  if (act === "use-fav") return useFav(target.dataset.id ?? "");
+  if (act === "drop-fav") return dropFav(target.dataset.id ?? "");
 });
 
 app.addEventListener("input", (event) => {
@@ -437,6 +514,8 @@ app.addEventListener("input", (event) => {
 function goBack(): void {
   token += 1;
   state.notice = "";
+  state.favNote = "";
+  state.favError = false;
   state.busy = "";
   disarm();
   if (state.screen === "result") {
@@ -476,6 +555,53 @@ function addLeg(): void {
   state.screen = "search";
   state.query = "";
   state.notice = "";
+  state.favNote = "";
+  state.favError = false;
+  render();
+}
+
+function saveFav(): void {
+  if (state.legs.length === 0) return;
+  const result = addFavorite(state.favorites, state.legs, Date.now().toString(36));
+  if (result.status === "full") {
+    state.favNote = "常用最多 5 個，請先刪除一個";
+    state.favError = true;
+    render();
+    return;
+  }
+  if (result.status === "too-big") {
+    state.favNote = "這組路線太長，無法存入 cookie";
+    state.favError = true;
+    render();
+    return;
+  }
+  writeFavorites(result.favorites);
+  state.favNote = result.status === "added" ? "已加入常用" : "已更新常用";
+  state.favError = false;
+  render();
+}
+
+function useFav(id: string): void {
+  const fav = state.favorites.find((item) => item.id === id);
+  if (!fav) return;
+  state.legs = fav.legs.map((leg) => ({
+    choice: { ...leg.choice },
+    board: { ...leg.board },
+    alight: { ...leg.alight },
+    walkMinutes: leg.walkMinutes,
+  }));
+  state.query = "";
+  state.favNote = "";
+  state.favError = false;
+  state.notice = "";
+  persist();
+  void finish();
+}
+
+function dropFav(id: string): void {
+  writeFavorites(removeFavorite(state.favorites, id));
+  state.favNote = "";
+  state.favError = false;
   render();
 }
 
@@ -645,5 +771,6 @@ async function boot(): Promise<void> {
   render();
 }
 
+loadFavorites();
 restore();
 void boot();

@@ -171,6 +171,37 @@ h2.dir { margin: 0; font-size: 22px; }
 
 .secondary { background: #241c15; color: #f6efe4; }
 
+.favs { display: flex; flex-direction: column; gap: 8px; }
+
+.favs h2 { margin: 0; font-size: 15px; font-weight: 700; color: var(--muted); }
+
+.fav-row { display: flex; align-items: stretch; gap: 8px; }
+
+.fav-row .choice { flex: 1; min-width: 0; }
+
+.fav-drop {
+  flex: none;
+  min-width: 64px;
+  min-height: 56px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--red);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.fav-save {
+  width: 100%;
+  min-height: 44px;
+  border-radius: 14px;
+  border: 1px solid var(--red);
+  background: var(--card);
+  color: var(--red);
+  font-size: 16px;
+  font-weight: 700;
+}
+
 .footer {
   position: sticky;
   bottom: 0;
